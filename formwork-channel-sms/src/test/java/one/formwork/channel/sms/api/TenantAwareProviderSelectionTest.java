@@ -3,6 +3,7 @@ package one.formwork.channel.sms.api;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import one.formwork.channel.sms.cost.SmsCostService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -30,6 +31,7 @@ class TenantAwareProviderSelectionTest {
 
     @Mock private SmsGateway twilioGateway;
     @Mock private SmsGateway vonageGateway;
+    @Mock private SmsCostService costService;
 
     @Test
     void sendSms_TenantsWithDifferentProviderOverrides_EachUsesItsOwnProvider() {
@@ -43,7 +45,7 @@ class TenantAwareProviderSelectionTest {
         // Only tenant B overrides away from the global default.
         properties.setTenantProviders(Map.of(tenantB.toString(), "VONAGE"));
 
-        SmsChannelService service = new SmsChannelService(List.of(twilioGateway, vonageGateway), properties);
+        SmsChannelService service = new SmsChannelService(List.of(twilioGateway, vonageGateway), properties, costService);
 
         SmsResult resultA = service.sendSms(new SmsMessage("+4915112345678", "Hi A", tenantA));
         SmsResult resultB = service.sendSms(new SmsMessage("+4915112345678", "Hi B", tenantB));
@@ -66,7 +68,7 @@ class TenantAwareProviderSelectionTest {
         // other tenant's provider.
         properties.setTenantProviders(Map.of(tenantA.toString(), "MESSAGEBIRD"));
 
-        SmsChannelService service = new SmsChannelService(List.of(twilioGateway), properties);
+        SmsChannelService service = new SmsChannelService(List.of(twilioGateway), properties, costService);
 
         assertThrows(IllegalStateException.class,
                 () -> service.sendSms(new SmsMessage("+4915112345678", "Hi", tenantA)));

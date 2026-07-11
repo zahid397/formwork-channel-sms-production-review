@@ -3,6 +3,7 @@ package one.formwork.channel.sms.cost;
 import one.formwork.channel.sms.api.SmsResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,12 +33,27 @@ public class SmsCostService {
     }
 
     /**
-     * Record the cost for an SMS that was just sent.
+     * Record the cost for an SMS that was just sent. Idempotent per
+     * (provider, messageId): a second call for a message already recorded
+     * (e.g. a caller-level retry after a successful-but-slow send) is a
+     * no-op, not a duplicate row. See REVIEW.md Finding 4 and
+     * docs/adr/0001-*.md for why - the fast-path check below and the
+     * unique constraint in V2__add_cost_record_idempotency_constraint.sql
+     * work together: the check avoids unnecessary work in the common case,
+     * the constraint is the actual guarantee under concurrent/racing calls.
+     * A messageId of null (a provider response missing an id) can't be
+     * deduplicated on and is always inserted, same as before this change.
      */
     @Transactional
     public SmsCostEntity recordCost(UUID tenantId, String recipient, SmsResult result) {
         if (!result.isSuccess()) {
             log.debug("Skipping cost recording for failed SMS: {}", result.errorCode());
+            return null;
+        }
+
+        if (result.messageId() != null
+                && repository.existsByProviderAndMessageId(result.provider(), result.messageId())) {
+            log.info("Cost already recorded for provider={}, skipping duplicate", result.provider());
             return null;
         }
 
@@ -57,10 +73,18 @@ public class SmsCostService {
         entity.setCurrency("EUR");
         entity.setCountryCode(countryCode);
 
-        SmsCostEntity saved = repository.save(entity);
-        log.info("SMS cost recorded: tenant={}, provider={}, cost={} EUR, segments={}",
-                tenantId, result.provider(), totalCost, segments);
-        return saved;
+        try {
+            SmsCostEntity saved = repository.save(entity);
+            log.info("SMS cost recorded: tenant={}, provider={}, cost={} EUR, segments={}",
+                    tenantId, result.provider(), totalCost, segments);
+            return saved;
+        } catch (DataIntegrityViolationException e) {
+            // Lost the race against a concurrent recordCost for the same
+            // (provider, messageId) - the unique constraint from V2 caught
+            // what the existence check above couldn't. Not an error.
+            log.info("Duplicate cost record prevented by unique constraint for provider={}", result.provider());
+            return null;
+        }
     }
 
     /**

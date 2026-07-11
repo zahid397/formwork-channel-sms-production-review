@@ -25,5 +25,7 @@ public interface SmsCostRepository extends JpaRepository<SmsCostEntity, UUID> {
     List<Object[]> costBreakdownByProvider(UUID tenantId, Instant from, Instant to);
 
     long countByTenantIdAndSentAtBetween(UUID tenantId, Instant from, Instant to);
+
+    boolean existsByProviderAndMessageId(String provider, String messageId);
 }
 

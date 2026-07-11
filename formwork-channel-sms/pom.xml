@@ -46,6 +46,34 @@
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
+        <!--
+            The four existing *WireMockTest files (REVIEW.md Finding 5) don't
+            actually use WireMock - there was no such dependency in this pom
+            at all. Added for TwilioSmsGatewayRealHttpTest, the one honest
+            example of what those files should have been doing: a real HTTP
+            call against a real stub server, with assertions on the request
+            that was actually sent.
+        -->
+        <dependency>
+            <groupId>org.wiremock</groupId>
+            <artifactId>wiremock-standalone</artifactId>
+            <version>3.9.2</version>
+            <scope>test</scope>
+        </dependency>
+        <!--
+            For SmsChannelIntegrationTest (Required Gap D): a real Spring
+            context + real repository/persistence, not mocks. The real
+            platform uses Postgres (flyway-database-postgresql above); this
+            module has no Postgres or Testcontainers available in this
+            environment (see README.md "Known limitations"), so this test
+            uses H2 in PostgreSQL compatibility mode instead - documented as
+            a deliberate substitution, not a claim of full parity.
+        -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
     <build>
         <plugins>

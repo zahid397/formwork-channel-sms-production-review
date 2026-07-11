@@ -92,11 +92,13 @@ class RetryAndFailoverTest {
         SmsResult result = service.sendSms(new SmsMessage("+4915112345678", "Hi", tenantId));
 
         assertFalse(result.isSuccess(), "every provider failed - this must be reported as a failure, never as success");
-        // maxAttempts=3, cycling twilio/vonage/twilio - never more than 3 total attempts.
-        int totalAttempts = 0;
-        totalAttempts += org.mockito.Mockito.mockingDetails(twilioGateway).getInvocations().size();
-        totalAttempts += org.mockito.Mockito.mockingDetails(vonageGateway).getInvocations().size();
-        assertTrue(totalAttempts <= 3, "attempts must be bounded by maxAttempts, was " + totalAttempts);
+        // maxAttempts=3, cycling twilio/vonage/twilio - never more than 3 total send() attempts
+        // (deliberately counting only .send(), not the .supports() probes used to build the chain).
+        long totalSendAttempts = org.mockito.Mockito.mockingDetails(twilioGateway).getInvocations().stream()
+                        .filter(inv -> inv.getMethod().getName().equals("send")).count()
+                + org.mockito.Mockito.mockingDetails(vonageGateway).getInvocations().stream()
+                        .filter(inv -> inv.getMethod().getName().equals("send")).count();
+        assertTrue(totalSendAttempts <= 3, "send attempts must be bounded by maxAttempts, was " + totalSendAttempts);
     }
 
     @Test

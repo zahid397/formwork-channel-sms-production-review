@@ -37,6 +37,8 @@ class SmsChannelServiceTest {
 
     @BeforeEach
     void setUp() {
+        lenient().when(properties.getRetry()).thenReturn(new SmsChannelProperties.RetryProperties());
+        lenient().when(properties.getFailoverOrder()).thenReturn(List.of());
         service = new SmsChannelService(List.of(twilioGateway, vonageGateway), properties, costService);
     }
 

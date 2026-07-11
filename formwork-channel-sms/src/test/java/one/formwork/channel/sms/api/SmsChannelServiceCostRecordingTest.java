@@ -38,6 +38,8 @@ class SmsChannelServiceCostRecordingTest {
     @Test
     void sendSms_SuccessfulSend_RecordsCostExactlyOnce() {
         when(properties.getProvider()).thenReturn("TWILIO");
+        when(properties.getRetry()).thenReturn(new SmsChannelProperties.RetryProperties());
+        when(properties.getFailoverOrder()).thenReturn(List.of());
         when(gateway.supports("TWILIO")).thenReturn(true);
         SmsResult success = SmsResult.success("msg-1", "TWILIO", 1);
         when(gateway.send(any())).thenReturn(success);
@@ -54,8 +56,14 @@ class SmsChannelServiceCostRecordingTest {
     @Test
     void sendSms_FailedSend_DoesNotRecordCost() {
         when(properties.getProvider()).thenReturn("TWILIO");
+        // A permanent (4xx) failure so this test exercises exactly one
+        // attempt regardless of retry/failover behavior - the point here is
+        // "failure never records cost", not retry counting.
+        SmsChannelProperties.RetryProperties retry = new SmsChannelProperties.RetryProperties();
+        when(properties.getRetry()).thenReturn(retry);
+        when(properties.getFailoverOrder()).thenReturn(List.of());
         when(gateway.supports("TWILIO")).thenReturn(true);
-        SmsResult failure = SmsResult.failure("TWILIO", "500", "Server error");
+        SmsResult failure = SmsResult.failure("TWILIO", "400", "Bad request");
         when(gateway.send(any())).thenReturn(failure);
 
         SmsChannelService service = new SmsChannelService(List.of(gateway), properties, costService);

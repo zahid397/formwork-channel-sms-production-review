@@ -8,7 +8,6 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.ZoneOffset;
@@ -117,8 +116,28 @@ public class AwsSnsSmsGateway implements SmsGateway {
         return "AWS_SNS";
     }
 
+    /**
+     * RFC 3986 URI percent-encoding, as AWS Signature V4 canonicalization
+     * requires (see https://docs.aws.amazon.com/general/latest/gr/sigv4-create-canonical-request.html).
+     * This is deliberately NOT {@link URLEncoder#encode}: that implements
+     * HTML form encoding (space -> '+', '~' encoded, '*' left literal),
+     * which disagrees with RFC 3986 on exactly those three characters and
+     * causes AWS to reject the signature for any request whose query
+     * string contains one of them - including every SMS body with a space.
+     */
     private static String encode(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8);
+        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        StringBuilder sb = new StringBuilder(bytes.length);
+        for (byte b : bytes) {
+            int i = b & 0xFF;
+            if ((i >= 'A' && i <= 'Z') || (i >= 'a' && i <= 'z') || (i >= '0' && i <= '9')
+                    || i == '-' || i == '_' || i == '.' || i == '~') {
+                sb.append((char) i);
+            } else {
+                sb.append('%').append(String.format("%02X", i));
+            }
+        }
+        return sb.toString();
     }
 
     private static String sha256Hex(String data) {

@@ -11,7 +11,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -57,7 +56,7 @@ class TenantAwareProviderSelectionTest {
 
     @Test
     void sendSms_TenantOverrideProviderNotRegistered_FailsWithoutFallingBackToGlobalDefault() {
-        when(twilioGateway.supports(anyString())).thenReturn(true);
+        when(twilioGateway.supports("MESSAGEBIRD")).thenReturn(false);
 
         SmsChannelProperties properties = new SmsChannelProperties();
         properties.setProvider("TWILIO");

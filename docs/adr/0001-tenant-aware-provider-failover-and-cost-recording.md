@@ -139,6 +139,23 @@ don't support natively. Deferred; see Consequences.
   it as permanent trades resilience (a genuine transient timeout is not
   retried) for safety (a slow-but-successful send is never resent). The
   real fix is the deferred idempotency-key alternative above.
+- **KNOWN GAP, found in this review's own final hostile self-check, not yet
+  fixed: `SEND_ERROR` is retried on the same unstated assumption that
+  "the request never reached the provider," but that assumption is not
+  actually enforced anywhere.** Every gateway's `catch (Exception e)` block
+  is a single blanket catch that maps *any* exception - a connection
+  refused before a byte was sent, or a connection reset while reading the
+  provider's response after it may have already processed the request - to
+  the same `SEND_ERROR` code. Only the first case is safe to retry; the
+  second is exactly as ambiguous as `TIMEOUT` and is currently
+  misclassified as safe. This means the unsafe-duplicate-send risk this
+  ADR describes as solved for timeouts is **not actually closed** for this
+  closely related failure mode. Fixing it needs each gateway to distinguish
+  connection-phase exceptions (`java.net.ConnectException`,
+  `java.net.UnknownHostException` - safe to retry) from response-phase
+  ones (unsafe, should be classified alongside `TIMEOUT`), which no gateway
+  currently does. Tracked as a correction to make before this design is
+  considered complete, not before this document is honest about it.
 
 ## Transaction/idempotency trade-offs
 
@@ -146,10 +163,22 @@ don't support natively. Deferred; see Consequences.
 the (non-transactional, in-process) HTTP call to the provider — they cannot
 be one transaction, since the provider call is an irreversible external
 side effect a database transaction can't roll back. The idempotency
-guarantee is therefore enforced at the storage layer (unique constraint),
-not by wrapping both operations atomically, which is the only correct way
-to guarantee "at most one cost row per real send" when the send itself is
-external and non-transactional.
+guarantee is therefore enforced at the storage layer (unique constraint on
+`(provider, message_id)`), not by wrapping both operations atomically.
+
+**What this guarantees, precisely, and what it does not.** The constraint
+guarantees at most one cost row per `(provider, messageId)` pair - not "at
+most one cost row per real send," which is a stronger claim this design
+does not make. Those differ exactly when an upstream caller retries
+`sendSms()` for what it considers one logical message and the provider
+issues a *new* `messageId` for that retry (a real possibility whenever the
+first attempt's outcome was ambiguous - see the `TIMEOUT`/`SEND_ERROR`
+discussion above): two rows, each individually satisfying the unique
+constraint, get written for one real-world send. Closing that gap needs a
+caller-supplied idempotency key checked before dispatch (the deferred
+alternative above), not a stronger database constraint - the database has
+no way to know two different provider message IDs represent the same
+logical request.
 
 ## Why this scope under the time-box
 

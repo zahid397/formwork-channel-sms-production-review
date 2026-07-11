@@ -158,23 +158,33 @@ private static String encode(String value) {
 (`application/x-www-form-urlencoded`), not RFC 3986 URI encoding. The two
 disagree on exactly the characters AWS SigV4 requires to be RFC-3986-correct:
 a space becomes `+` under `URLEncoder` but must be `%20` under SigV4's
-canonicalization rules, and `*`/`~` are handled differently too. AWS's own
-signature-verification algorithm re-derives the canonical request from the
-request it actually receives using RFC 3986 rules; a query string containing
-`+` for spaces does not round-trip through that process the same way it was
-signed. Since the SMS `Message` body is put directly into this query string
-(line 48: `params.put("Message", message.body())`), **any message containing
-a space — i.e., virtually every real SMS — produces a signature AWS rejects**
-with `SignatureDoesNotMatch` (HTTP 403). This is a well-documented AWS SigV4
-pitfall, not a hypothetical.
+canonicalization rules, and `*`/`~` are handled differently too. This part is
+directly proven, not inferred: `AwsSnsSmsGatewayEncodingTest` calls the real
+`encode()` method and shows `encode(" ")` returns `"+"`, not `"%20"` —
+verified by actually running the assertion, not read off documentation.
+
+What follows from that — that AWS's signature-verification algorithm,
+which re-derives the canonical request from RFC 3986 rules, will reject a
+request whose query string used `+` for spaces with `SignatureDoesNotMatch`
+(HTTP 403) — is AWS's own documented SigV4 behavior and a well-known,
+widely-reported pitfall, not a guess. **It was not, however, verified
+against a live AWS SNS endpoint in this review**: no AWS credentials were
+available in this sandboxed environment (see README.md "Known
+limitations"), so the exact HTTP status/error code AWS returns was never
+directly observed here. The encoding defect itself is certain; its precise
+externally-observed consequence is a well-supported inference from AWS's
+published spec, not an empirical result from this review.
 
 **Production impact**
-The AWS SNS provider is effectively non-functional for real traffic. A
-tenant configured on AWS SNS gets a clean `SmsResult.failure("AWS_SNS", "403", ...)`
-(caught at line 101-103, so at least it isn't misreported as success — see
-Finding 6 for the general "no timeout" issue on the same gateway), but every
-single-word-free message fails, silently, in production, forever — and
-nothing in CI would catch it.
+Since the SMS `Message` body is put directly into the signed query string
+(line 48: `params.put("Message", message.body())`), any message containing
+a space — i.e., virtually every real SMS — is very likely to fail
+signature verification once it reaches AWS (see the caveat above). If it
+does, a tenant configured on AWS SNS gets a clean
+`SmsResult.failure("AWS_SNS", "403", ...)` (caught at line 101-103, so at
+least it isn't misreported as success — see Finding 6 for the general "no
+timeout" issue on the same gateway), but every single-word-free message
+fails, silently, in production, and nothing in CI would catch it.
 
 **Reproduction or evidence**
 Neither `AwsSnsSmsGatewayTest` nor `AwsSnsSmsGatewayExtraTest` (existing)

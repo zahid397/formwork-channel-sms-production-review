@@ -138,6 +138,23 @@ build at all - `mvn test` fails immediately with
 code exactly as handed off." That distinction is deliberate and documented
 throughout; see "Known limitations."
 
+### Coverage gate: why 60%
+
+The parent `pom.xml` configures JaCoCo's `check` goal (bound to `verify`) to
+fail the build if line coverage drops below **60%**. Actual coverage at
+HEAD is ~82% (see the table above) - the threshold is deliberately set well
+below the current real number, not at it, for two reasons: first, a
+threshold pinned to today's exact coverage would break the build on any
+legitimate line-count change elsewhere (e.g. adding a new provider) without
+that change itself being under-tested; second, near-100% thresholds invite
+exactly the "meaningless tests solely to increase coverage" this
+assignment explicitly warns against, whereas 60% is high enough to catch a
+real regression (an entire untested class or a large deleted test file)
+without being a rubber stamp near 0%. 60% is a starting gate, not a target -
+the expectation is to ratchet it up as confidence grows, particularly once
+the three remaining `*WireMockTest` files (REVIEW.md Finding 5) are
+retrofitted to real HTTP assertions rather than mocked ones.
+
 ### Local run
 
 This module is a Spring Boot auto-configuration library, not a runnable
@@ -264,6 +281,25 @@ noted that the test failed to *compile* against the original code (the
 strongest form of red - Findings 1 and 4, where the original constructor
 signature didn't support the fix's dependency at all).
 
+## CI
+
+`.github/workflows/ci.yml` checks out the repository, installs Temurin JDK
+21 with Maven dependency caching, and runs `mvn -B verify` - the same
+command verified locally throughout this review (build, full test suite,
+JaCoCo coverage gate) - then uploads the coverage and surefire reports as
+build artifacts. No provider credentials or other secrets are referenced
+anywhere in it, matching every test in this suite being self-contained
+(Mockito, WireMock, H2).
+
+**This workflow has been reviewed carefully for correctness but has not
+been executed on GitHub's actual runner infrastructure** - this review
+never pushed to a remote, so no real GitHub Actions run has occurred.
+Everything it does was verified locally with equivalent Maven commands
+against the JDK 21 / Maven 3.9.9 combination described above, which is a
+reasonable proxy but not a substitute for seeing it actually pass on
+`ubuntu-latest`. Confirming that is the first thing to do after this
+branch has a remote to push to.
+
 ---
 
 ## Known limitations
@@ -293,6 +329,16 @@ signature didn't support the fix's dependency at all).
   never blindly retried, but this trades away resilience for a genuinely
   transient timeout. The correct fix - a client-supplied idempotency key,
   checked before dispatch - is designed in the ADR but not implemented.
+- **`SEND_ERROR` has the same unknown-outcome gap as `TIMEOUT`, and it is
+  currently retried.** Found during this review's own final hostile
+  self-check, not fixed yet: every gateway's `catch (Exception e)` maps
+  *any* exception to `SEND_ERROR`, whether it's a connection refused before
+  any bytes were sent (genuinely safe to retry) or a connection reset while
+  reading the provider's response after it may have already processed the
+  request (exactly as ambiguous as a timeout, and currently retried anyway).
+  The ADR's "Consequences" section describes this in full; the fix is for
+  each gateway to distinguish connection-phase exceptions from
+  response-phase ones, which none of the five currently do.
 - **`handleDeliveryCallback` is unreachable.** No `@RestController` exists
   anywhere in this module, so provider delivery-status webhooks have no HTTP
   entry point to arrive through. Not touched in this review (out of scope -

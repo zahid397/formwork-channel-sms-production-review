@@ -91,6 +91,7 @@ public class AwsSnsSmsGateway implements SmsGateway {
                     .header("x-amz-date", amzDate)
                     .retrieve()
                     .bodyToMono(String.class)
+                    .timeout(GatewayTimeouts.DEFAULT)
                     .block();
 
             // SNS returns XML; extract MessageId
@@ -102,7 +103,8 @@ public class AwsSnsSmsGateway implements SmsGateway {
             return SmsResult.failure("AWS_SNS", String.valueOf(e.getStatusCode().value()), e.getResponseBodyAsString());
         } catch (Exception e) {
             log.error("AWS SNS SMS send failed: {}", e.getMessage(), e);
-            return SmsResult.failure("AWS_SNS", "SEND_ERROR", e.getMessage());
+            String code = GatewayTimeouts.isTimeout(e) ? "TIMEOUT" : "SEND_ERROR";
+            return SmsResult.failure("AWS_SNS", code, e.getMessage());
         }
     }
 

@@ -32,6 +32,7 @@ public class BudgetSmsGateway implements SmsGateway {
                             message.body())
                     .retrieve()
                     .bodyToMono(String.class)
+                    .timeout(GatewayTimeouts.DEFAULT)
                     .block();
 
             if (response != null && response.startsWith("OK")) {
@@ -47,7 +48,8 @@ public class BudgetSmsGateway implements SmsGateway {
             return SmsResult.failure("BUDGET_SMS", String.valueOf(e.getStatusCode().value()), e.getResponseBodyAsString());
         } catch (Exception e) {
             log.error("BudgetSMS send failed: {}", e.getMessage(), e);
-            return SmsResult.failure("BUDGET_SMS", "SEND_ERROR", e.getMessage());
+            String code = GatewayTimeouts.isTimeout(e) ? "TIMEOUT" : "SEND_ERROR";
+            return SmsResult.failure("BUDGET_SMS", code, e.getMessage());
         }
     }
 

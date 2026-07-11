@@ -3,6 +3,7 @@ package one.formwork.channel.sms.api;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @ConfigurationProperties(prefix = "formwork.sms-channel")
@@ -23,10 +24,21 @@ public class SmsChannelProperties {
      */
     private Map<String, String> tenantProviders = new LinkedHashMap<>();
 
+    /**
+     * Deterministic failover order after a tenant's primary provider, used
+     * when the primary returns a retryable failure. Providers with no
+     * registered gateway (not enabled/configured) are skipped. The primary
+     * itself is skipped here too if it appears in this list, so it isn't
+     * tried twice back-to-back.
+     */
+    private List<String> failoverOrder = List.of("TWILIO", "VONAGE", "AWS_SNS", "MESSAGEBIRD", "BUDGET_SMS");
+
     public String getProvider() { return provider; }
     public void setProvider(String p) { this.provider = p; }
     public Map<String, String> getTenantProviders() { return tenantProviders; }
     public void setTenantProviders(Map<String, String> tenantProviders) { this.tenantProviders = tenantProviders; }
+    public List<String> getFailoverOrder() { return failoverOrder; }
+    public void setFailoverOrder(List<String> failoverOrder) { this.failoverOrder = failoverOrder; }
     public TwilioProperties getTwilio() { return twilio; }
     public void setTwilio(TwilioProperties t) { this.twilio = t; }
     public VonageProperties getVonage() { return vonage; }

@@ -43,6 +43,7 @@ public class VonageSmsGateway implements SmsGateway {
                     .bodyValue(requestBody)
                     .retrieve()
                     .bodyToMono(Map.class)
+                    .timeout(GatewayTimeouts.DEFAULT)
                     .block();
 
             if (response != null && response.containsKey("messages")) {
@@ -68,7 +69,8 @@ public class VonageSmsGateway implements SmsGateway {
             return SmsResult.failure("VONAGE", String.valueOf(e.getStatusCode().value()), e.getResponseBodyAsString());
         } catch (Exception e) {
             log.error("Vonage SMS send failed: {}", e.getMessage(), e);
-            return SmsResult.failure("VONAGE", "SEND_ERROR", e.getMessage());
+            String code = GatewayTimeouts.isTimeout(e) ? "TIMEOUT" : "SEND_ERROR";
+            return SmsResult.failure("VONAGE", code, e.getMessage());
         }
     }
 

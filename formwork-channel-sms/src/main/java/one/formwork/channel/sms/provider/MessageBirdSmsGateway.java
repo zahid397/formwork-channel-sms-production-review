@@ -41,6 +41,7 @@ public class MessageBirdSmsGateway implements SmsGateway {
                     .bodyValue(requestBody)
                     .retrieve()
                     .bodyToMono(Map.class)
+                    .timeout(GatewayTimeouts.DEFAULT)
                     .block();
 
             String messageId = response != null ? String.valueOf(response.get("id")) : null;
@@ -51,7 +52,8 @@ public class MessageBirdSmsGateway implements SmsGateway {
             return SmsResult.failure("MESSAGEBIRD", String.valueOf(e.getStatusCode().value()), e.getResponseBodyAsString());
         } catch (Exception e) {
             log.error("MessageBird SMS send failed: {}", e.getMessage(), e);
-            return SmsResult.failure("MESSAGEBIRD", "SEND_ERROR", e.getMessage());
+            String code = GatewayTimeouts.isTimeout(e) ? "TIMEOUT" : "SEND_ERROR";
+            return SmsResult.failure("MESSAGEBIRD", code, e.getMessage());
         }
     }
 

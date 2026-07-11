@@ -43,6 +43,7 @@ public class TwilioSmsGateway implements SmsGateway {
                     .bodyValue(formBody)
                     .retrieve()
                     .bodyToMono(Map.class)
+                    .timeout(GatewayTimeouts.DEFAULT)
                     .block();
 
             String sid = response != null ? String.valueOf(response.get("sid")) : null;
@@ -58,7 +59,8 @@ public class TwilioSmsGateway implements SmsGateway {
             return SmsResult.failure("TWILIO", String.valueOf(e.getStatusCode().value()), e.getResponseBodyAsString());
         } catch (Exception e) {
             log.error("Twilio SMS send failed: {}", e.getMessage(), e);
-            return SmsResult.failure("TWILIO", "SEND_ERROR", e.getMessage());
+            String code = GatewayTimeouts.isTimeout(e) ? "TIMEOUT" : "SEND_ERROR";
+            return SmsResult.failure("TWILIO", code, e.getMessage());
         }
     }
 

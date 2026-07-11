@@ -12,13 +12,23 @@ Findings are ranked by production risk, Critical first. **Findings 1–3 are
 selected for the Part 2 fix** (see commit history and the "Status" line on
 each). Findings 1 and 4 share one root cause and are fixed together.
 
+**A note on line numbers, since this document was written before some of
+the fixes it describes:** every `Location` below cites the line the finding
+was actually found at, verified against real file content, not guessed.
+Where a fix has since changed that file, the `Location` line says so
+explicitly ("as reviewed at baseline commit `c0b2efe`; ... see the fix
+commit") and, where the surrounding code is otherwise unchanged, gives the
+current line number too. Every `Location` was re-verified against the final
+`HEAD` state of the repository as part of this review's own final
+validation pass — none are stale guesses.
+
 ---
 
 ## Finding 1 — Cost is never recorded for a single SMS sent in production
 
 **Severity:** Critical
 **Category:** Financial correctness
-**Location:** `formwork-channel-sms/src/main/java/one/formwork/channel/sms/api/SmsChannelService.java:10-24`
+**Location:** `formwork-channel-sms/src/main/java/one/formwork/channel/sms/api/SmsChannelService.java:10-24` (as reviewed at baseline commit `c0b2efe`; this code no longer exists in this form — see "Status" and the fix commit)
 
 **Observed behavior**
 `SmsChannelService` — the only entry point that actually sends an SMS — has a
@@ -71,7 +81,7 @@ idempotency guard.
 
 **Severity:** Critical
 **Category:** Tenant isolation
-**Location:** `formwork-channel-sms/src/main/java/one/formwork/channel/sms/api/SmsChannelService.java:34-40`, `formwork-channel-sms/src/main/java/one/formwork/channel/sms/config/SmsChannelAutoConfiguration.java:12-48`
+**Location:** `formwork-channel-sms/src/main/java/one/formwork/channel/sms/api/SmsChannelService.java:34-40`, `formwork-channel-sms/src/main/java/one/formwork/channel/sms/config/SmsChannelAutoConfiguration.java:12-48` (as reviewed at baseline commit `c0b2efe`; both files have since changed — see "Status" and the fix commit)
 
 **Observed behavior**
 `resolveGateway()` picks a gateway using only `properties.getProvider()` — a
@@ -130,7 +140,7 @@ configured provider isn't actually registered.
 
 **Severity:** Critical
 **Category:** Reliability / AWS SNS production correctness
-**Location:** `formwork-channel-sms/src/main/java/one/formwork/channel/sms/provider/AwsSnsSmsGateway.java:57-60,77-78,90,120-122`
+**Location:** `formwork-channel-sms/src/main/java/one/formwork/channel/sms/provider/AwsSnsSmsGateway.java:57-60,77-78,90,120-122` (as reviewed at baseline commit `c0b2efe`; the cited `encode()` implementation has since been replaced — see "Status" and the fix commit)
 
 **Observed behavior**
 `AwsSnsSmsGateway` builds an AWS Signature Version 4 request by hand (no AWS
@@ -191,7 +201,7 @@ consistently for both the canonical request and the actual request URI.
 
 **Severity:** Critical
 **Category:** Financial correctness
-**Location:** `formwork-channel-sms/src/main/java/one/formwork/channel/sms/cost/SmsCostService.java:38-64`, `formwork-channel-sms/src/main/resources/db/migration/cs/V1__create_sms_cost_table.sql:2-19`
+**Location:** `formwork-channel-sms/src/main/java/one/formwork/channel/sms/cost/SmsCostService.java:38-64` (as reviewed at baseline commit `c0b2efe`; `recordCost` has since gained the idempotency check — see "Status" and the fix commit), `formwork-channel-sms/src/main/resources/db/migration/cs/V1__create_sms_cost_table.sql:2-19` (unmodified, still accurate — V2 adds the constraint separately)
 
 **Observed behavior**
 `recordCost` always performs an unconditional `repository.save(entity)` — new
@@ -252,9 +262,11 @@ reflectively overwrites the gateway's private `webClient` field with the
 mock (e.g. `TwilioSmsGatewayWireMockTest.java:37-40`), then stubs the entire
 fluent call chain (`webClient.post() → uri(anyString(), any(Object[].class)) →
 contentType(any()) → bodyValue(any()) → retrieve() → bodyToMono(Map.class)`)
-to return a canned response. `formwork-channel-sms/pom.xml` (lines 18-49)
-has no WireMock dependency at all — there is no library in this module
-capable of standing up a stub HTTP server.
+to return a canned response. At the time of this review,
+`formwork-channel-sms/pom.xml` had no WireMock dependency at all — there was
+no library in this module capable of standing up a stub HTTP server. (A
+`wiremock-standalone` test dependency was added as part of the fix below;
+it was absent in the reviewed baseline, commit `c0b2efe`.)
 
 **Failure mechanism**
 `uri(anyString(), any(Object[].class))` matches *any* string. If the Twilio
@@ -276,9 +288,8 @@ Finding 3) a broken encoding scheme, for any of the four providers these
 files cover.
 
 **Reproduction or evidence**
-Read the four files directly — no `wiremock` import exists anywhere in
-`src/test`, and `pom.xml` confirms no such dependency is declared. Compare
-against the added `TwilioSmsGatewayRealHttpTest`
+Read the four files directly — none of them import a `wiremock` package.
+Compare against the added `TwilioSmsGatewayRealHttpTest`
 (`src/test/java/.../provider/TwilioSmsGatewayRealHttpTest.java`), which
 starts an actual WireMock server and asserts on the real request path,
 headers, and body — the kind of test this take-home's Part 3.4 asks for.
@@ -307,7 +318,7 @@ other three providers is scoped out — see README.md).
 
 **Severity:** High
 **Category:** Reliability
-**Location:** All five gateways — `AwsSnsSmsGateway.java:37,95`, `TwilioSmsGateway.java:27-30,46`, `VonageSmsGateway.java:23-25,46`, `MessageBirdSmsGateway.java:23-26,44`, `BudgetSmsGateway.java:19,35`
+**Location:** All five gateways — `AwsSnsSmsGateway.java:37,95`, `TwilioSmsGateway.java:27-30,46`, `VonageSmsGateway.java:23-25,46`, `MessageBirdSmsGateway.java:23-26,44`, `BudgetSmsGateway.java:19,35` (as reviewed at baseline commit `c0b2efe`; all five now have an explicit `.timeout(...)` — see "Status" and the fix commit)
 
 **Observed behavior**
 Every gateway builds its `WebClient` with `WebClient.builder()...build()` and
@@ -352,7 +363,7 @@ the top-3 slot).
 
 **Severity:** High
 **Category:** Reliability
-**Location:** `formwork-channel-sms/src/main/java/one/formwork/channel/sms/api/SmsChannelProperties.java:58-62`, `formwork-channel-sms/src/main/java/one/formwork/channel/sms/api/SmsChannelService.java:20-24`
+**Location:** `formwork-channel-sms/src/main/java/one/formwork/channel/sms/api/SmsChannelProperties.java:90-94` (unchanged `RetryProperties` class; at lines 58-62 in the reviewed baseline, commit `c0b2efe` — shifted by the `tenantProviders`/`failoverOrder` fields added for Findings 2 and 7), `formwork-channel-sms/src/main/java/one/formwork/channel/sms/api/SmsChannelService.java:20-24` (as reviewed at baseline commit `c0b2efe`; this code has since changed — see "Status" and the fix commit)
 
 **Observed behavior**
 `SmsChannelProperties.RetryProperties` declares `maxAttempts` (default 3) and
@@ -389,11 +400,11 @@ classification.
 
 **Severity:** Medium
 **Category:** Security
-**Location:** `TwilioSmsGateway.java:54`, `VonageSmsGateway.java:55`, `MessageBirdSmsGateway.java:47`, `BudgetSmsGateway.java:39`, `AwsSnsSmsGateway.java:99`
+**Location:** `TwilioSmsGateway.java:55`, `VonageSmsGateway.java:56`, `MessageBirdSmsGateway.java:48`, `BudgetSmsGateway.java:40`, `AwsSnsSmsGateway.java:99`
 
 **Observed behavior**
 Every gateway's success path logs the raw recipient number at INFO, e.g.
-`TwilioSmsGateway.java:54`:
+`TwilioSmsGateway.java:55`:
 `log.info("Twilio SMS sent: sid={}, to={}", sid, message.to());` — same
 pattern (`to={}`, `message.to()`) in all five files.
 
@@ -427,7 +438,7 @@ correlation instead of the raw number.
 
 **Severity:** Medium
 **Category:** Reliability
-**Location:** `formwork-channel-sms/src/main/java/one/formwork/channel/sms/api/SmsChannelService.java:26-28`
+**Location:** `formwork-channel-sms/src/main/java/one/formwork/channel/sms/api/SmsChannelService.java:85-87` (unchanged code; at lines 26-28 in the reviewed baseline, commit `c0b2efe` — shifted since by unrelated additions earlier in the file)
 
 **Observed behavior**
 ```java
@@ -473,10 +484,10 @@ batch always returns one result per input message.
 
 **Severity:** Medium
 **Category:** Financial correctness
-**Location:** `formwork-channel-sms/src/main/java/one/formwork/channel/sms/cost/SmsCostService.java:57`, `formwork-channel-sms/src/main/java/one/formwork/channel/sms/cost/ProviderRateRegistry.java:22-31`
+**Location:** `formwork-channel-sms/src/main/java/one/formwork/channel/sms/cost/SmsCostService.java:73` (unchanged code; line 57 in the reviewed baseline, commit `c0b2efe` — shifted by the idempotency check added above it for Finding 4), `formwork-channel-sms/src/main/java/one/formwork/channel/sms/cost/ProviderRateRegistry.java:22-31` (unmodified, still accurate)
 
 **Observed behavior**
-`recordCost` always calls `entity.setCurrency("EUR")` (line 57), unconditionally,
+`recordCost` always calls `entity.setCurrency("EUR")` (line 73), unconditionally,
 regardless of provider or country. `ProviderRateRegistry`'s constructor seeds
 both `"DE"`-keyed rates (lines 23-27) and `"US"`-keyed rates (lines 29-31)
 for the same providers, with no currency tag stored anywhere alongside a
@@ -516,7 +527,7 @@ change than the time-box allows alongside the three Critical fixes).
 
 **Severity:** Low
 **Category:** Security
-**Location:** `formwork-channel-sms/src/main/java/one/formwork/channel/sms/cost/SmsCostService.java:114-117`
+**Location:** `formwork-channel-sms/src/main/java/one/formwork/channel/sms/cost/SmsCostService.java:138-141` (unchanged code; lines 114-117 in the reviewed baseline, commit `c0b2efe`)
 
 **Observed behavior**
 ```java
@@ -561,7 +572,7 @@ and last 2 regardless of length, hide everything else.
 
 **Severity:** Low
 **Category:** Security
-**Location:** `formwork-channel-sms/src/main/java/one/formwork/channel/sms/provider/AwsSnsSmsGateway.java:89-95`
+**Location:** `formwork-channel-sms/src/main/java/one/formwork/channel/sms/provider/AwsSnsSmsGateway.java:88-95` (the GET-with-query-params structure is unchanged; the fix for Finding 3 changed how the query string is *encoded*, not this request shape — a `.timeout(...)` line added for Finding 6 shifted this block by one line from 89-95 in the reviewed baseline, commit `c0b2efe`)
 
 **Observed behavior**
 The `PhoneNumber` and `Message` values go into the request URI as query

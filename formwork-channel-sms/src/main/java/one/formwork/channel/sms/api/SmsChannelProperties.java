@@ -2,6 +2,9 @@ package one.formwork.channel.sms.api;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 @ConfigurationProperties(prefix = "formwork.sms-channel")
 public class SmsChannelProperties {
     private String provider = "TWILIO";
@@ -12,8 +15,18 @@ public class SmsChannelProperties {
     private MessageBirdProperties messagebird = new MessageBirdProperties();
     private RetryProperties retry = new RetryProperties();
 
+    /**
+     * Per-tenant provider override: tenantId (as a UUID string) to provider
+     * code (e.g. "VONAGE"). A tenant with no entry here uses {@link #provider}.
+     * Never used as a source of fallback across tenants - see
+     * SmsChannelService.resolveGateway.
+     */
+    private Map<String, String> tenantProviders = new LinkedHashMap<>();
+
     public String getProvider() { return provider; }
     public void setProvider(String p) { this.provider = p; }
+    public Map<String, String> getTenantProviders() { return tenantProviders; }
+    public void setTenantProviders(Map<String, String> tenantProviders) { this.tenantProviders = tenantProviders; }
     public TwilioProperties getTwilio() { return twilio; }
     public void setTwilio(TwilioProperties t) { this.twilio = t; }
     public VonageProperties getVonage() { return vonage; }
@@ -40,7 +53,14 @@ public class SmsChannelProperties {
         public String getFromNumber() { return fromNumber; } public void setFromNumber(String s) { this.fromNumber = s; }
     }
     public static class AwsSnsProperties {
+        // AWS SNS has no static credential property (it reads
+        // AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from the environment at
+        // send time), so unlike the other four providers it has no config
+        // field whose presence can double as an "is this configured" signal
+        // for wiring - hence the explicit flag.
+        private boolean enabled = false;
         private String region = "eu-central-1"; private String senderId;
+        public boolean isEnabled() { return enabled; } public void setEnabled(boolean e) { this.enabled = e; }
         public String getRegion() { return region; } public void setRegion(String s) { this.region = s; }
         public String getSenderId() { return senderId; } public void setSenderId(String s) { this.senderId = s; }
     }

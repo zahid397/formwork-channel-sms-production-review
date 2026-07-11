@@ -278,22 +278,28 @@ files cover.
 **Reproduction or evidence**
 Read the four files directly — no `wiremock` import exists anywhere in
 `src/test`, and `pom.xml` confirms no such dependency is declared. Compare
-against the added `AwsSnsWireMockRealHttpTest`
-(`src/test/java/.../provider/AwsSnsWireMockRealHttpTest.java`), which starts
-an actual WireMock server and asserts on the real request path, headers, and
-query string — the kind of test this take-home's Part 3.4 asks for.
+against the added `TwilioSmsGatewayRealHttpTest`
+(`src/test/java/.../provider/TwilioSmsGatewayRealHttpTest.java`), which
+starts an actual WireMock server and asserts on the real request path,
+headers, and body — the kind of test this take-home's Part 3.4 asks for.
 
 **Recommended fix**
 Either rename these four files to stop implying they do something they
 don't (`*MockedWebClientTest`), or replace them with real WireMock-backed
 tests asserting on the request that was actually sent. Given the time-box,
-this review adds one honest example (AWS SNS, since that's also where the
-real bug was) rather than rewriting all four — see README.md "Scope cut" for
-why the other three were left as-is.
+this review adds one honest example (Twilio — chosen over AWS SNS because
+Twilio's gateway issues a relative URI against WebClient's base URL, which
+WireMock can intercept cleanly; AWS SNS builds an absolute
+`https://sns.<region>.amazonaws.com` URL from scratch, so redirecting it to
+a stub server would need a gateway code change. Finding 3's AWS SNS
+encoding fix is instead proven directly via `AwsSnsSmsGatewayEncodingTest`,
+which reflectively exercises the real `encode()` method) rather than
+rewriting all four — see README.md "Scope cut" for why the other three were
+left as-is.
 
-**Status:** Documented only (the new AWS SNS WireMock test added under
-Required Gap D demonstrates the fix pattern; retrofitting the other three
-providers is scoped out — see README.md).
+**Status:** Fixed for Twilio only (the new `TwilioSmsGatewayRealHttpTest`
+demonstrates the honest pattern under Required Gap D; retrofitting the
+other three providers is scoped out — see README.md).
 
 ---
 
@@ -591,7 +597,7 @@ gateway for Finding 3.
 | 2 | No tenant-aware provider selection | Critical | Tenant isolation | **Fixed (top 3)** |
 | 3 | AWS SNS SigV4 encoding breaks real messages | Critical | Reliability / AWS SNS | **Fixed (top 3)** |
 | 4 | No idempotency on cost recording | Critical | Financial correctness | **Fixed (with #1)** |
-| 5 | `*WireMockTest` doesn't use WireMock | High | Testing | Documented; pattern fixed for AWS SNS only |
+| 5 | `*WireMockTest` doesn't use WireMock | High | Testing | Fixed for Twilio only (pattern demonstrated) |
 | 6 | No timeout anywhere in HTTP layer | High | Reliability | Fixed (Required Gap C) |
 | 7 | No retry/failover logic | High | Reliability | Fixed (Required Gap C) |
 | 8 | PII logged in plaintext (5 gateways) | Medium | Security | Documented only |
@@ -602,6 +608,8 @@ gateway for Finding 3.
 
 Findings 1, 2, and 3 (with 4 folded into 1) are the three fixed under Part 2.
 Findings 6 and 7 are fixed as part of Required Gap C (Part 3) since retry and
-timeouts are inseparable. Findings 5, 8, 9, 10, 11, 12 are real, verified
-defects that are documented rather than fixed — see README.md "Scope cut"
-for the reasoning behind each cut.
+timeouts are inseparable. Finding 5 is fixed for one of the four affected
+files (Twilio) as the honest-test pattern under Required Gap D; the other
+three are left as-is. Findings 8, 9, 10, 11, 12 are real, verified defects
+that are documented rather than fixed — see README.md "Scope cut" for the
+reasoning behind each cut.

@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      # No provider credentials of any kind are used anywhere in this
+      # workflow. Every test in this module is self-contained: Mockito
+      # mocks for pure unit tests, a real WireMock server for the one
+      # honest HTTP test, and an in-memory H2 database for the Spring
+      # context integration test. AwsSnsSmsGatewayExtraTest's "no AWS
+      # credentials" test explicitly asserts the CONFIG_ERROR path that
+      # fires when AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY are absent -
+      # exactly the state this runner is in, and exactly the point of that
+      # test.
+      - name: Build, test, and enforce coverage gate
+        run: mvn --batch-mode --no-transfer-progress verify
+
+      - name: Publish JaCoCo coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-coverage-report
+          path: formwork-channel-sms/target/site/jacoco/
+          retention-days: 14
+
+      - name: Publish surefire test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: formwork-channel-sms/target/surefire-reports/
+          retention-days: 14

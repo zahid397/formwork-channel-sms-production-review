@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  STUB MODULE - see README.md "Known limitations" and the package-info in
+  one.formwork.base.tenant.filter for what this reconstructs and why.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>one.formwork</groupId>
+        <artifactId>formwork-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>formwork-base-tenant</artifactId>
+    <name>Formwork - base-tenant (local stub)</name>
+    <description>
+        Minimal local stand-in for the real one.formwork:formwork-base-tenant platform
+        module, which is not part of this take-home checkout. Provides only the three
+        types formwork-channel-sms actually imports, with just enough behavior to compile
+        and to run its test suite.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.persistence</groupId>
+            <artifactId>jakarta.persistence-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+    </dependencies>
+</project>

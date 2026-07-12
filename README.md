@@ -1,3 +1,4 @@
+
 # formwork-channel-sms — production review
 
 This is a hostile production review of `formwork-channel-sms`, a Spring Boot
@@ -26,30 +27,248 @@ formwork-channel-sms/
   config/      Spring Boot auto-configuration wiring the above
 ```
 
-### Request flow (as of this review)
+### Architecture overview
 
-```
-caller
-  -> SmsChannelService.sendSms(SmsMessage)
-     -> PhoneNumberValidator.validate(to)
-     -> resolve provider for this tenant
-          (tenant override in formwork.sms-channel.tenant-providers,
-           else the global formwork.sms-channel.provider default)
-     -> build a deterministic failover chain: [primary, ...failover-order]
-     -> for up to retry.max-attempts:
-          -> gateway.send(message)                          [real HTTP, per-provider]
-          -> success?  -> recordCostSafely -> return result
-          -> permanent failure? -> stop, return failure
-          -> retryable failure? -> sleep(backoff), try next candidate
-     -> all attempts exhausted -> return the last (honest) failure
-  <- SmsResult
+```mermaid
+graph TD
+    subgraph "Caller"
+        A[Application Code]
+    end
+
+    subgraph "formwork-channel-sms"
+        subgraph "API Layer"
+            B[SmsChannelService]
+            C[SmsMessage]
+            D[SmsResult]
+            E[SmsChannelProperties]
+        end
+
+        subgraph "Validation Layer"
+            F[PhoneNumberValidator<br/>E.164]
+        end
+
+        subgraph "Provider Resolution"
+            G{Tenant-Specific<br/>Provider?}
+            H[Use Tenant Override]
+            I[Use Global Default]
+        end
+
+        subgraph "Failover Chain"
+            J[Build Deterministic Chain<br/>primary + failover-order]
+            K[Next Candidate]
+        end
+
+        subgraph "Provider Layer"
+            L[SmsGateway Interface]
+            M[TwilioSmsGateway]
+            N[VonageSmsGateway]
+            O[MessageBirdSmsGateway]
+            P[BudgetSmsGateway]
+            Q[AwsSnsGateway]
+        end
+
+        subgraph "Cost Recording"
+            R[SmsCostService]
+            S[SmsCostRepository<br/>JPA]
+            T[ProviderRateRegistry]
+            U[(sms_cost_record<br/>Flyway-migrated)]
+        end
+    end
+
+    subgraph "External Providers"
+        V[Twilio API]
+        W[Vonage API]
+        X[MessageBird API]
+        Y[BudgetSMS API]
+        Z[AWS SNS API]
+    end
+
+    A -->|sendSms| B
+    B -->|validate| F
+    B --> G
+    G -->|Yes| H
+    G -->|No| I
+    H --> J
+    I --> J
+    
+    J -->|for max-attempts| K
+    K --> L
+    L --> M
+    L --> N
+    L --> O
+    L --> P
+    L --> Q
+    
+    M -->|HTTP| V
+    N -->|HTTP| W
+    O -->|HTTP| X
+    P -->|HTTP| Y
+    Q -->|HTTP| Z
+    
+    M -->|result| B
+    N -->|result| B
+    O -->|result| B
+    P -->|result| B
+    Q -->|result| B
+    
+    B -->|success?| R
+    R -->|segment-aware cost| T
+    R -->|check idempotency| S
+    S -->|persist| U
+    
+    B -->|return| D
 ```
 
-`recordCostSafely` calls `SmsCostService.recordCost`, which - only for a
-successful result - computes segment-aware cost from `ProviderRateRegistry`,
-checks `(provider, messageId)` hasn't already been recorded, and persists an
-`SmsCostEntity` via `SmsCostRepository` (JPA, `sms_cost_record` table,
-Flyway-migrated).
+### Request flow sequence
+
+```mermaid
+sequenceDiagram
+    participant Caller
+    participant SmsChannelService
+    participant PhoneNumberValidator
+    participant ProviderResolver
+    participant Gateway as SmsGateway (selected)
+    participant SmsCostService
+    participant Database as sms_cost_record
+
+    Caller->>SmsChannelService: sendSms(SmsMessage)
+    
+    SmsChannelService->>PhoneNumberValidator: validate(to)
+    alt invalid
+        PhoneNumberValidator-->>SmsChannelService: validation error
+        SmsChannelService-->>Caller: SmsResult failure
+    end
+    
+    SmsChannelService->>ProviderResolver: resolve for tenant
+    alt tenant override exists
+        ProviderResolver-->>SmsChannelService: provider from config map
+    else no override
+        ProviderResolver-->>SmsChannelService: global default provider
+    end
+    
+    SmsChannelService->>SmsChannelService: build failover chain<br/>[primary, ...failover-order]
+    
+    loop for retry.max-attempts
+        SmsChannelService->>Gateway: send(message)
+        
+        alt success
+            Gateway-->>SmsChannelService: success + messageId
+            
+            par cost recording (best-effort)
+                SmsChannelService->>SmsCostService: recordCost(provider, messageId)
+                SmsCostService->>Database: check idempotency (provider, messageId)
+                alt not yet recorded
+                    Database-->>SmsCostService: no existing record
+                    SmsCostService->>SmsCostService: compute segment-aware cost
+                    SmsCostService->>Database: INSERT cost entity
+                    Database-->>SmsCostService: persisted
+                else already recorded
+                    Database-->>SmsCostService: duplicate (skipped)
+                end
+                SmsCostService-->>SmsChannelService: recorded (or logged error)
+            end
+            
+            SmsChannelService-->>Caller: SmsResult success
+            
+        else permanent failure (4xx, timeout, config error)
+            Gateway-->>SmsChannelService: permanent error
+            SmsChannelService-->>Caller: SmsResult failure (no retry)
+            
+        else retryable failure (5xx, send error)
+            Gateway-->>SmsChannelService: retryable error
+            SmsChannelService->>SmsChannelService: sleep(backoff)
+            Note over SmsChannelService: try next candidate
+            
+            alt all attempts exhausted
+                SmsChannelService-->>Caller: SmsResult failure (last error)
+            end
+        end
+    end
+```
+
+### Domain model
+
+```mermaid
+classDiagram
+    class SmsChannelService {
+        +sendSms(SmsMessage) SmsResult
+        +sendBulk(List~SmsMessage~) List~SmsResult~
+        -resolveProvider(tenantId) SmsGateway
+        -buildFailoverChain(primary) List~SmsGateway~
+        -recordCostSafely(provider, messageId, message)
+    }
+    
+    class SmsGateway {
+        <<interface>>
+        +send(SmsMessage) SmsResult
+        +getProviderCode() String
+    }
+    
+    class SmsMessage {
+        +String to
+        +String from
+        +String body
+        +Map~String,String~ metadata
+    }
+    
+    class SmsResult {
+        +boolean success
+        +String messageId
+        +String providerCode
+        +SmsSendStatus status
+        +String errorMessage
+    }
+    
+    class SmsChannelProperties {
+        +ProviderCode provider
+        +Map~String,ProviderCode~ tenantProviders
+        +List~ProviderCode~ failoverOrder
+        +RetryConfig retry
+        +TwilioConfig twilio
+        +VonageConfig vonage
+        +MessageBirdConfig messagebird
+        +BudgetSmsConfig budgetsms
+        +AwsSnsConfig awsSns
+    }
+    
+    class SmsCostEntity {
+        <<JPA Entity>>
+        +UUID id
+        +String tenantId
+        +String provider
+        +String messageId
+        +BigDecimal cost
+        +String currency
+        +int segmentCount
+        +Instant createdAt
+    }
+    
+    class SmsCostService {
+        +recordCost(provider, messageId, message) boolean
+        -computeSegments(body) int
+        -calculateCost(provider, segments) BigDecimal
+    }
+    
+    class ProviderRateRegistry {
+        -Map~String,BigDecimal~ ratesPerSegment
+        +getRate(provider) BigDecimal
+    }
+    
+    class PhoneNumberValidator {
+        +validate(phoneNumber) boolean
+        +normalize(phoneNumber) String
+    }
+    
+    SmsChannelService --> SmsGateway : uses
+    SmsChannelService --> SmsChannelProperties : configured by
+    SmsChannelService --> SmsCostService : records through
+    SmsChannelService --> PhoneNumberValidator : validates with
+    SmsMessage --> SmsGateway : passed to
+    SmsGateway --> SmsResult : returns
+    SmsCostService --> SmsCostEntity : persists
+    SmsCostService --> ProviderRateRegistry : looks up rates
+    SmsCostEntity --> "sms_cost_record" : mapped to
+```
 
 ---
 
@@ -230,6 +449,24 @@ field to key off, since it reads env vars at send time).
 
 ### Retry/failover behavior
 
+```mermaid
+stateDiagram-v2
+    [*] --> Sending
+    Sending --> Success: HTTP 2xx
+    Sending --> Retryable: HTTP 5xx / SEND_ERROR
+    Sending --> Permanent: HTTP 4xx / TIMEOUT / CONFIG_ERROR / unknown
+    
+    Retryable --> Backoff: attempts < max
+    Retryable --> Exhausted: attempts = max
+    Backoff --> NextCandidate: sleep(backoff)
+    NextCandidate --> Sending: try next gateway
+    
+    Success --> RecordCost: best-effort
+    RecordCost --> [*]: return result
+    Permanent --> [*]: stop immediately
+    Exhausted --> [*]: return last error
+```
+
 - Up to `retry.max-attempts` total attempts, cycling through
   `[primary, ...failover-order minus primary]`, sleeping `retry.backoff`
   between attempts.
@@ -243,6 +480,22 @@ field to key off, since it reads env vars at send time).
 
 ### Cost recording behavior
 
+```mermaid
+flowchart TD
+    A[SMS Send Succeeds] --> B{Check Idempotency<br/>provider + messageId}
+    B -->|not recorded| C[Compute Segments]
+    B -->|already exists| D[Skip - Duplicate]
+    C --> E[Look Up Rate<br/>ProviderRateRegistry]
+    E --> F[Calculate Cost<br/>rate × segments]
+    F --> G[INSERT SmsCostEntity]
+    G --> H{Cost Insert Result}
+    H -->|success| I[Return Success]
+    H -->|failure| J[Log ERROR<br/>tenant, provider, messageId<br/>NEVER phone number or body]
+    D --> I
+    J --> I
+    I --> K[Caller Gets Successful SmsResult]
+```
+
 - Recorded exactly once, only for the attempt that returns success.
 - Idempotent per `(provider, messageId)`: an existence check before insert,
   backed by a unique index (`V2__add_cost_record_idempotency_constraint.sql`)
@@ -255,6 +508,28 @@ field to key off, since it reads env vars at send time).
 ---
 
 ## Test strategy
+
+```mermaid
+graph LR
+    subgraph "Test Pyramid"
+        A[Unit Tests<br/>Mockito<br/>Fast, No I/O]
+        B[Integration Test<br/>@SpringBootTest<br/>H2 + Real Wiring]
+        C[Real HTTP Test<br/>WireMock<br/>Actual Wire Protocol]
+    end
+    
+    A -->|gateway response parsing| D[Gateway Logic]
+    A -->|cost calculation| E[Cost Logic]
+    A -->|tenant resolution| F[Provider Resolution]
+    A -->|retry classification| G[Failover Logic]
+    
+    B -->|end-to-end persistence| H[SmsChannelService<br/>+ SmsCostService<br/>+ SmsCostRepository]
+    
+    C -->|request URL, headers, body| I[TwilioSmsGateway<br/>Real HTTP]
+    
+    style A fill:#90EE90
+    style B fill:#87CEEB
+    style C fill:#FFB6C1
+```
 
 - **Unit tests** (Mockito) for gateway response parsing, cost calculation,
   tenant resolution, and retry/failover classification - fast, no I/O.
@@ -283,6 +558,22 @@ signature didn't support the fix's dependency at all).
 
 ## CI
 
+```mermaid
+graph LR
+    A[GitHub Push] --> B[Checkout Code]
+    B --> C[Setup Temurin JDK 21]
+    C --> D[Cache Maven Dependencies]
+    D --> E[mvn -B verify]
+    E --> F[Build + Test Suite]
+    F --> G[JaCoCo Coverage Gate]
+    G -->|≥ 60%| H[Upload Reports]
+    G -->|< 60%| I[Build Fails]
+    H --> J[Coverage Report<br/>Surefire Report]
+    
+    style H fill:#90EE90
+    style I fill:#FFB6C1
+```
+
 `.github/workflows/ci.yml` checks out the repository, installs Temurin JDK
 21 with Maven dependency caching, and runs `mvn -B verify` - the same
 command verified locally throughout this review (build, full test suite,
@@ -303,6 +594,36 @@ branch has a remote to push to.
 ---
 
 ## Known limitations
+
+```mermaid
+graph TD
+    A[Known Limitations] --> B[Platform Gap]
+    A --> C[Environment Gap]
+    A --> D[Test Coverage Gap]
+    A --> E[Resilience Gap]
+    A --> F[Feature Gap]
+    
+    B --> B1[Parent POM + base-tenant<br/>are local stubs]
+    B --> B2[Cannot verify against<br/>real platform code]
+    
+    C --> C1[No standalone JDK/Maven<br/>JetBrains Runtime 21 used]
+    C --> C2[No Docker daemon<br/>Testcontainers unavailable]
+    C --> C3[Postgres unavailable<br/>H2 used instead of Flyway]
+    
+    D --> D1[3 of 4 *WireMockTest files<br/>still mock WebClient]
+    D --> D2[V1/V2 migration SQL<br/>never tested against Postgres]
+    
+    E --> E1[TIMEOUT is permanent<br/>no idempotency key]
+    E --> E2[SEND_ERROR is retried<br/>connection vs response not distinguished]
+    
+    F --> F1[handleDeliveryCallback<br/>has no REST endpoint]
+    
+    style B fill:#FFB6C1
+    style C fill:#FFD700
+    style D fill:#FFD700
+    style E fill:#FF6347
+    style F fill:#DDA0DD
+```
 
 - **This is not the real platform module.** The parent POM and
   `formwork-base-tenant` are local reconstructions for this review (see
@@ -368,6 +689,30 @@ branch has a remote to push to.
 
 Ranked by what I'd pick up first:
 
+```mermaid
+gantt
+    title Future Work Priority
+    dateFormat  YYYY-MM-DD
+    axisFormat  %b %d
+    
+    section Immediate (Post-Review)
+    PII in gateway logs           :a1, 2026-07-13, 1d
+    sendBulk losing results        :a2, 2026-07-14, 1d
+    Currency hardcoded to EUR      :a3, 2026-07-15, 2d
+    
+    section Short-term
+    Retrofit remaining WireMock tests :b1, 2026-07-17, 2d
+    Fix maskRecipient + SNS PII    :b2, 2026-07-19, 1d
+    
+    section Medium-term
+    Idempotency key for sends      :c1, 2026-07-20, 3d
+    DB-backed tenant config        :c2, 2026-07-23, 3d
+    Reconciliation job             :c3, 2026-07-26, 3d
+    
+    section Long-term
+    Real CI against Postgres       :d1, 2026-07-29, 2d
+```
+
 1. **PII in gateway logs** (REVIEW.md Finding 8) - mechanical but touches
    all five gateways and their tests; deprioritized behind the three
    Critical fixes and the four required gaps.
@@ -411,6 +756,8 @@ See [AI-USAGE.md](AI-USAGE.md) for how AI was used in this review, including
 concrete cases where it was wrong. See
 [`docs/adr/0001-tenant-aware-provider-failover-and-cost-recording.md`](docs/adr/0001-tenant-aware-provider-failover-and-cost-recording.md)
 for the design reasoning behind the three Required Gaps.
+
+---
 
 I do not claim this module is "production-ready." It has one path to real
 Postgres verification that was never exercised, four documented-but-unfixed
